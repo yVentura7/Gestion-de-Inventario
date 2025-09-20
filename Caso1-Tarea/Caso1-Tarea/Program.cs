@@ -1,41 +1,106 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.OpenApi.Models;
+using Caso1_Tarea.Models;
+using Caso1_Tarea.Models.Enums;
+using Caso1_Tarea.Repositories;
+using Caso1_Tarea.Repositories.Interfaces;
+using System.Reflection;
+using System.Text.Json.Serialization;
+
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-builder.Services.AddOpenApi();
+// Add services to the container
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        // Para manejar enums como strings en JSON
+        options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+        // Para evitar referencias circulares
+        options.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
+    });
+
+// Configurar DbContext
+builder.Services.AddDbContext<Lab5Context>(options =>
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"), 
+        o => o.MapEnum<TipoMovimiento>("tipo_movimiento")
+            .MapEnum<EstadoPedido>("estado_pedido")));
+
+// Registrar Unit of Work y Repository
+builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
+
+// Configurar Swagger/OpenAPI
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "API de Gestión de Inventario",
+        Version = "v1",
+        Description = "API para gestionar productos, proveedores, pedidos y movimientos de inventario",
+        Contact = new OpenApiContact
+        {
+            Name = "Tu Nombre",
+            Email = "tu-email@example.com",
+        }
+    });
+
+    // Incluir comentarios XML para documentación
+    var xmlFile = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
+    var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
+    if (File.Exists(xmlPath))
+    {
+        c.IncludeXmlComments(xmlPath);
+    }
+
+    // Configurar para mostrar enums como strings
+    c.UseInlineDefinitionsForEnums();
+});
+
+// Configurar CORS si es necesario
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowAll",
+        builder =>
+        {
+            builder.AllowAnyOrigin()
+                   .AllowAnyMethod()
+                   .AllowAnyHeader();
+        });
+});
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
+// Configure the HTTP request pipeline
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
+    app.UseDeveloperExceptionPage();
 }
+
+// Habilitar Swagger UI
+app.UseSwagger();
+app.UseSwaggerUI(c =>
+{
+    c.SwaggerEndpoint("/swagger/v1/swagger.json", "API de Gestión de Inventario v1");
+    c.RoutePrefix = string.Empty; // Para que Swagger sea la página principal
+    c.DocumentTitle = "API de Gestión de Inventario - Documentación";
+});
 
 app.UseHttpsRedirection();
 
-var summaries = new[]
-{
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
+app.UseCors("AllowAll");
 
-app.MapGet("/weatherforecast", () =>
+app.UseAuthorization();
+
+app.MapControllers();
+
+// Aplicar migraciones automáticamente (opcional)
+using (var scope = app.Services.CreateScope())
+{
+    var context = scope.ServiceProvider.GetRequiredService<Lab5Context>();
+    if (context.Database.GetPendingMigrations().Any())
     {
-        var forecast = Enumerable.Range(1, 5).Select(index =>
-                new WeatherForecast
-                (
-                    DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-                    Random.Shared.Next(-20, 55),
-                    summaries[Random.Shared.Next(summaries.Length)]
-                ))
-            .ToArray();
-        return forecast;
-    })
-    .WithName("GetWeatherForecast");
+        context.Database.Migrate();
+    }
+}
 
 app.Run();
-
-record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
-{
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-}
