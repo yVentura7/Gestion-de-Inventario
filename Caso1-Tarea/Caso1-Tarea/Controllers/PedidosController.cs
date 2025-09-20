@@ -2,10 +2,11 @@ using Microsoft.AspNetCore.Mvc;
 using Caso1_Tarea.DTOs;
 using Caso1_Tarea.Models;
 using Caso1_Tarea.Repositories;
-using Caso1_Tarea.Repositories.Interfaces;
 using Microsoft.EntityFrameworkCore;
 
-[ApiController]
+namespace Caso1_Tarea.Controllers
+{
+    [ApiController]
     [Route("api/[controller]")]
     [Produces("application/json")]
     public class PedidosController : ControllerBase
@@ -18,7 +19,7 @@ using Microsoft.EntityFrameworkCore;
         }
 
         /// <summary>
-        /// Obtiene todos los pedidos
+        /// Obtiene todos los pedidos con sus detalles
         /// </summary>
         [HttpGet]
         [ProducesResponseType(typeof(IEnumerable<PedidoProveedorDto>), StatusCodes.Status200OK)]
@@ -46,10 +47,51 @@ using Microsoft.EntityFrameworkCore;
                     NombreProducto = d.Producto?.Nombre,
                     PrecioUnitario = d.Producto?.Precio
                 }).ToList()
+            });
+
+            return Ok(pedidosDto);
+        }
+        
+        /// <summary>
+        /// Obtiene un pedido por su ID
+        /// </summary>
+        [HttpGet("{id}")]
+        [ProducesResponseType(typeof(PedidoProveedorDto), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public async Task<ActionResult<PedidoProveedorDto>> GetPedido(int id)
+        {
+            var pedido = await _unitOfWork.PedidosProveedores.GetQueryable()
+                .Include(p => p.Proveedor)
+                .Include(p => p.Detallepedidos)
+                .ThenInclude(d => d.Producto)
+                .FirstOrDefaultAsync(p => p.Pedidoid == id);
+
+            if (pedido == null)
+            {
+                return NotFound($"Pedido con ID {id} no encontrado.");
+            }
+            
+            var pedidoDto = new PedidoProveedorDto
+            {
+                Pedidoid = pedido.Pedidoid,
+                Proveedorid = pedido.Proveedorid,
+                Fechapedido = pedido.Fechapedido,
+                Estado = pedido.Estado,
+                NombreProveedor = pedido.Proveedor?.Nombre,
+                Detalles = pedido.Detallepedidos.Select(d => new DetallePedidoDto
+                {
+                    Detalleid = d.Detalleid,
+                    Pedidoid = d.Pedidoid,
+                    Productoid = d.Productoid,
+                    Cantidad = d.Cantidad,
+                    NombreProducto = d.Producto?.Nombre,
+                    PrecioUnitario = d.Producto?.Precio
+                }).ToList()
             };
 
             return Ok(pedidoDto);
         }
+
 
         /// <summary>
         /// Crea un nuevo pedido con sus detalles
@@ -71,13 +113,13 @@ using Microsoft.EntityFrameworkCore;
                 };
 
                 await _unitOfWork.PedidosProveedores.AddAsync(pedido);
-                await _unitOfWork.SaveChangesAsync();
+                await _unitOfWork.SaveChangesAsync(); 
 
                 foreach (var detalleDto in createDto.Detalles)
                 {
                     var detalle = new Detallepedido
                     {
-                        Pedidoid = pedido.Pedidoid,
+                        Pedidoid = pedido.Pedidoid, 
                         Productoid = detalleDto.Productoid,
                         Cantidad = detalleDto.Cantidad
                     };
@@ -87,13 +129,14 @@ using Microsoft.EntityFrameworkCore;
 
                 await _unitOfWork.SaveChangesAsync();
                 await _unitOfWork.CommitAsync();
-
-                return CreatedAtAction(nameof(GetPedido), new { id = pedido.Pedidoid }, new { id = pedido.Pedidoid });
+                
+                var pedidoCreadoDto = await GetPedido(pedido.Pedidoid);
+                return CreatedAtAction(nameof(GetPedido), new { id = pedido.Pedidoid }, pedidoCreadoDto.Value);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 await _unitOfWork.RollbackAsync();
-                throw;
+                return StatusCode(500, $"Error interno del servidor: {ex.Message}");
             }
         }
 
@@ -103,7 +146,7 @@ using Microsoft.EntityFrameworkCore;
         [HttpPut("{id}/estado")]
         [ProducesResponseType(StatusCodes.Status204NoContent)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<IActionResult> UpdateEstadoPedido(int id, UpdatePedidoProveedorDto updateDto)
+        public async Task<IActionResult> UpdateEstadoPedido(int id, [FromBody] UpdatePedidoProveedorDto updateDto)
         {
             var pedido = await _unitOfWork.PedidosProveedores.GetByIdAsync(id);
             if (pedido == null)
@@ -126,9 +169,7 @@ using Microsoft.EntityFrameworkCore;
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         public async Task<IActionResult> DeletePedido(int id)
         {
-            var pedido = await _unitOfWork.PedidosProveedores.GetQueryable()
-                .Include(p => p.Detallepedidos)
-                .FirstOrDefaultAsync(p => p.Pedidoid == id);
+            var pedido = await _unitOfWork.PedidosProveedores.GetByIdAsync(id);
                 
             if (pedido == null)
             {
@@ -141,3 +182,4 @@ using Microsoft.EntityFrameworkCore;
             return NoContent();
         }
     }
+}
